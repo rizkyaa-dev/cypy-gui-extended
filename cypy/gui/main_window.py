@@ -5,12 +5,18 @@ from tkinter import filedialog, messagebox, ttk
 
 from cypy.gui.models.job import DetectionStatus, JobQueue, JobStatus
 from cypy.gui.services.app_controller import GuiAppController
-from cypy.gui.widgets import ComparisonWorkspace, MainToolBar, PageStatusBar
+from cypy.gui.widgets import (
+    ComparisonWorkspace,
+    FileNavigator,
+    MainToolBar,
+    PageStatusBar,
+)
 from cypy.gui.workers import DetectionExecutor, GuiEventType, ProcessingExecutor
 
 
 class MainWindow(ttk.Frame):
     POLL_INTERVAL_MS = 50
+    MAX_EVENTS_PER_POLL = 25
 
     def __init__(self, root, controller=None, max_workers=1):
         super().__init__(root, style="App.TFrame")
@@ -30,7 +36,9 @@ class MainWindow(ttk.Frame):
         )
         self.active_job_ids = set()
         self.detecting_job_ids = set()
+        self.pending_detection_job_ids = set()
         self._poll_after_id = None
+        self._navigator_refresh_after_id = None
 
         self.language_var = tk.StringVar(
             value=self.controller.default_target_language()
@@ -66,11 +74,25 @@ class MainWindow(ttk.Frame):
         )
         self.toolbar.grid(row=0, column=0, sticky="ew")
 
-        self.workspace = ComparisonWorkspace(self)
-        self.workspace.grid(row=1, column=0, sticky="nsew")
+        content = ttk.Frame(self, style="App.TFrame")
+        content.grid(row=1, column=0, sticky="nsew")
+        content.rowconfigure(0, weight=1)
+        content.columnconfigure(2, weight=1)
+
+        self.navigator = FileNavigator(content, on_select=self.show_page)
+        self.navigator.grid(row=0, column=0, sticky="ns")
+        ttk.Separator(content, orient=tk.VERTICAL).grid(
+            row=0,
+            column=1,
+            sticky="ns",
+        )
+
+        self.workspace = ComparisonWorkspace(content)
+        self.workspace.grid(row=0, column=2, sticky="nsew")
 
         self.page_status = PageStatusBar(self, on_remove=self.remove_current_page)
         self.page_status.grid(row=2, column=0, sticky="ew")
+        self._refresh_navigator()
 
     def add_files(self):
         extensions = self.controller.supported_image_extensions()
@@ -97,13 +119,14 @@ class MainWindow(ttk.Frame):
             return
 
         for job in added:
-            self.detecting_job_ids.add(job.id)
-            self.detection_executor.submit(job)
+            self.pending_detection_job_ids.add(job.id)
 
         if self.current_index < 0:
             self.show_page(0)
         else:
             self._refresh_page_controls()
+            self._refresh_navigator()
+        self._schedule_detection(preferred_index=self.current_index)
         self.page_status.set_message(f"Added {len(added)} page(s)")
 
     def show_previous_page(self):
@@ -118,6 +141,7 @@ class MainWindow(ttk.Frame):
             self.workspace.clear()
             self.page_status.clear()
             self._refresh_page_controls()
+            self._refresh_navigator()
             return
 
         self.current_index = max(0, min(int(index), len(self.jobs) - 1))
@@ -143,6 +167,8 @@ class MainWindow(ttk.Frame):
         )
         self.page_status.set_message(self._page_message(job))
         self._refresh_page_controls()
+        self._refresh_navigator()
+        self._schedule_detection(preferred_index=self.current_index)
 
     def translate_current_page(self):
         job = self.current_job
@@ -204,7 +230,8 @@ class MainWindow(ttk.Frame):
         ):
             return
 
-        self.jobs.remove(job.id)
+        removed = self.jobs.remove(job.id)
+        self.pending_detection_job_ids.discard(removed.id)
         if len(self.jobs):
             self.show_page(min(self.current_index, len(self.jobs) - 1))
         else:
@@ -228,8 +255,12 @@ class MainWindow(ttk.Frame):
         if self._poll_after_id is not None:
             self.after_cancel(self._poll_after_id)
             self._poll_after_id = None
+        if self._navigator_refresh_after_id is not None:
+            self.after_cancel(self._navigator_refresh_after_id)
+            self._navigator_refresh_after_id = None
         self.detection_executor.shutdown(wait=False)
         self.executor.shutdown(wait=False)
+        self.navigator.shutdown()
         self.root.destroy()
 
     def _refresh_page_controls(self):
@@ -248,6 +279,17 @@ class MainWindow(ttk.Frame):
                 not in (DetectionStatus.PENDING, DetectionStatus.RUNNING)
             ),
         )
+
+    def _refresh_navigator(self):
+        if self._navigator_refresh_after_id is not None:
+            return
+        self._navigator_refresh_after_id = self.after_idle(
+            self._flush_navigator_refresh
+        )
+
+    def _flush_navigator_refresh(self):
+        self._navigator_refresh_after_id = None
+        self.navigator.set_jobs(self.jobs.jobs, selected_index=self.current_index)
 
     @staticmethod
     def _page_message(job):
@@ -278,13 +320,17 @@ class MainWindow(ttk.Frame):
 
     def _poll_events(self):
         self._poll_after_id = None
-        while True:
+        processed = 0
+        while processed < self.MAX_EVENTS_PER_POLL:
             try:
                 event = self.event_queue.get_nowait()
             except queue.Empty:
                 break
             self._handle_event(event)
-        self._schedule_event_poll()
+            processed += 1
+
+        delay = 1 if not self.event_queue.empty() else self.POLL_INTERVAL_MS
+        self._poll_after_id = self.after(delay, self._poll_events)
 
     def _handle_event(self, event):
         if event.type == GuiEventType.DETECTION_STARTED:
@@ -307,6 +353,8 @@ class MainWindow(ttk.Frame):
             self.jobs.update(event.payload)
             if self.current_job and self.current_job.id == event.job_id:
                 self.show_page(self.current_index)
+            else:
+                self._refresh_navigator()
             return
 
         if event.type in (GuiEventType.JOB_FINISHED, GuiEventType.JOB_FAILED):
@@ -323,6 +371,8 @@ class MainWindow(ttk.Frame):
             self.status_var.set("Detecting")
         if self.current_job and self.current_job.id == job_id:
             self.show_page(self.current_index)
+        else:
+            self._refresh_navigator()
 
     def _detection_completed(self, result):
         self.detecting_job_ids.discard(result.job_id)
@@ -346,9 +396,12 @@ class MainWindow(ttk.Frame):
 
         if self.current_job and self.current_job.id == result.job_id:
             self.show_page(self.current_index)
+        else:
+            self._refresh_navigator()
         if not self.detecting_job_ids and not self.active_job_ids:
             self.status_var.set("Ready")
         self._refresh_page_controls()
+        self._schedule_detection(preferred_index=self.current_index)
 
     def _complete_job(self, result):
         self.jobs.update(result.job)
@@ -358,8 +411,42 @@ class MainWindow(ttk.Frame):
             self.show_page(self.current_index)
             if result.error:
                 self.page_status.set_message(result.error)
+        else:
+            self._refresh_navigator()
 
         if not self.active_job_ids:
             self.status_var.set("Detecting" if self.detecting_job_ids else "Ready")
             self.toolbar.set_processing(False)
         self._refresh_page_controls()
+
+    def _schedule_detection(self, preferred_index=None):
+        if self.detecting_job_ids or not self.pending_detection_job_ids:
+            return
+
+        job = self._next_detection_job(preferred_index)
+        if job is None:
+            return
+
+        self.pending_detection_job_ids.discard(job.id)
+        self.detecting_job_ids.add(job.id)
+        self.detection_executor.submit(job)
+
+    def _next_detection_job(self, preferred_index=None):
+        if not len(self.jobs):
+            return None
+
+        jobs = self.jobs.jobs
+        if preferred_index is None or preferred_index < 0:
+            preferred_index = 0
+
+        preferred_index = max(0, min(int(preferred_index), len(jobs) - 1))
+        order = sorted(
+            range(len(jobs)),
+            key=lambda index: (abs(index - preferred_index), index),
+        )
+
+        for index in order:
+            job = jobs[index]
+            if job.id in self.pending_detection_job_ids:
+                return job
+        return None

@@ -14,6 +14,7 @@ from cypy.gui.reporters.queue_reporter import QueueReporter
 from cypy.gui.services.app_controller import GuiAppController
 from cypy.gui.services.detection_service import BubbleDetectionService
 from cypy.gui.services.job_runner import GuiProcessingContext, JobRunner
+from cypy.gui.widgets.file_navigator import FileNavigator
 from cypy.gui.workers.detection_executor import DetectionExecutor
 from cypy.gui.workers.executor import ProcessingExecutor
 
@@ -79,6 +80,25 @@ def test_job_stores_immutable_detection_result(tmp_path):
 
     assert detected.detection_status == DetectionStatus.SUCCEEDED
     assert detected.boxes == (Box(1, 2, 30, 40),)
+
+
+def test_file_navigator_status_labels_prioritize_failure(tmp_path):
+    job = ProcessingJob(str(tmp_path / "page.png")).with_detection(
+        DetectionStatus.FAILED,
+        error="boom",
+    )
+
+    assert FileNavigator._status_text(job) == "detection failed"
+    assert FileNavigator._status_color(job) == "#ff6b72"
+
+
+def test_file_navigator_status_label_shows_detected_bubbles(tmp_path):
+    job = ProcessingJob(str(tmp_path / "page.png")).with_detection(
+        DetectionStatus.SUCCEEDED,
+        boxes=(Box(1, 2, 30, 40), Box(5, 6, 15, 16)),
+    )
+
+    assert FileNavigator._status_text(job) == "2 bubble(s)"
 
 
 def test_controller_applies_gui_target_language_override():

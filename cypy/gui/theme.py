@@ -28,6 +28,8 @@ def apply_dark_theme(root):
     style.configure(".", background=BACKGROUND, foreground=TEXT)
     style.configure("App.TFrame", background=BACKGROUND)
     style.configure("Toolbar.TFrame", background="#121212")
+    style.configure("Navigator.TFrame", background="#121212")
+    style.configure("NavigatorHeader.TFrame", background="#121212")
     style.configure("Workspace.TFrame", background=VIEWER)
     style.configure("Viewer.TFrame", background=VIEWER)
     style.configure("StatusBar.TFrame", background="#121212")
@@ -47,6 +49,24 @@ def apply_dark_theme(root):
         "ToolbarStatus.TLabel",
         background="#121212",
         foreground=TEXT_MUTED,
+    )
+    style.configure(
+        "NavigatorTitle.TLabel",
+        background="#121212",
+        foreground=TEXT,
+        font=("Segoe UI Semibold", 9),
+    )
+    style.configure(
+        "NavigatorCount.TLabel",
+        background="#121212",
+        foreground=TEXT_MUTED,
+        font=("Segoe UI Semibold", 8),
+    )
+    style.configure(
+        "NavigatorEmpty.TLabel",
+        background="#121212",
+        foreground=TEXT_MUTED,
+        padding=(8, 8),
     )
     style.configure(
         "ViewerHeader.TLabel",
@@ -152,4 +172,3 @@ def apply_dark_theme(root):
         darkcolor=ACCENT,
         thickness=8,
     )
-
