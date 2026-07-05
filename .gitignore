@@ -1,0 +1,51 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Temporary Manga Translation files
+cypy_cache/
+
+# Data & Config files
+cypy_profile.json
+data/
+*.txt
+!requirements.txt
+
+# Binaries
+bin/
+*.exe
+
+# Environments
+.env
+.venv*/
+env/
+venv*/
+ENV/
+env.bak/
+venv.bak/
+
+# Logs
+*.log
+
+# Caches
+.cache/
+
+# OS specific
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Python build and packaging
+*.egg-info/
+build/
+dist/
+dist_nuitka/
+releases/
+*.spec
+
+# Nuitka & Installer build artifacts
+*.build/
+*.dist/
+*.onefile-build/
+*.iss
