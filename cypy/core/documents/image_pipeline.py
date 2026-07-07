@@ -3,6 +3,8 @@ import re
 
 import cv2
 
+from cypy.core.detection.text_assist import TextAssistedBoxRefiner
+from cypy.core.detection.text_onnx import PPOCRTextDetector
 from cypy.core.detection.box_filters import (
     buang_kotak_ngawur,
     buang_kotak_raksasa_palsu,
@@ -59,9 +61,12 @@ class OutputNamer:
 
 
 class BubbleExtractionPipeline:
-    def __init__(self, detector, settings):
+    def __init__(self, detector, settings, text_detector=None, text_refiner=None):
         self.detector = detector
         self.settings = settings
+        self._text_detector = text_detector
+        self._text_detector_loaded = text_detector is not None
+        self._text_refiner = text_refiner
 
     def extract(self, img, image_path):
         boxes = self.detect_boxes(img, image_path)
@@ -80,12 +85,51 @@ class BubbleExtractionPipeline:
             image_height,
             settings=self.settings,
         )
+        boxes = self._refine_with_text_assist(img, boxes)
         return buang_kotak_sfx_dan_gambar(
             img=img,
             boxes=boxes,
             image_name=image_path,
             settings=self.settings,
         )
+
+    def _refine_with_text_assist(self, img, boxes):
+        if not self.settings.text_assist_enabled:
+            return boxes
+
+        refiner = self._text_refiner or self._create_text_refiner()
+        if refiner is None:
+            return boxes
+
+        return refiner.refine(img, boxes)
+
+    def _create_text_refiner(self):
+        detector = self._load_text_detector()
+        if detector is None:
+            return None
+
+        self._text_refiner = TextAssistedBoxRefiner(detector, self.settings)
+        return self._text_refiner
+
+    def _load_text_detector(self):
+        if self._text_detector_loaded:
+            return self._text_detector
+
+        self._text_detector_loaded = True
+        model_path = getattr(self.settings, "text_detector_model", "")
+        if not model_path or not os.path.exists(model_path):
+            return None
+
+        try:
+            self._text_detector = PPOCRTextDetector(
+                model_path,
+                min_score=self.settings.text_assist_min_score,
+                box_threshold=self.settings.text_assist_box_threshold,
+            )
+        except Exception:
+            self._text_detector = None
+
+        return self._text_detector
 
     def _build_crops(self, img, boxes):
         crops = []

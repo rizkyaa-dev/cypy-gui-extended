@@ -112,6 +112,231 @@ def hitung_posisi_teks_terpusat(x1, y1, x2, y2, text_bbox):
     return origin_x, origin_y
 
 
+def tulis_teks_di_mask(
+    draw,
+    text,
+    roi_box,
+    safe_mask,
+    target_language=None,
+    settings=None,
+):
+    """Draw text using per-line widths derived from an interior bubble mask."""
+    cfg = _settings(settings)
+    text = str(text).strip()
+    if not text:
+        return False
+
+    lang_key = (target_language or "").lower()
+    if lang_key in ("jepang", "japanese"):
+        return False
+    if not _has_non_latin(text):
+        text = text.upper()
+
+    mask_box = _mask_bounds(safe_mask)
+    if mask_box is None:
+        return False
+
+    roi_x1, roi_y1, _, _ = roi_box
+    mx1, my1, mx2, my2 = mask_box
+    mask_width = max(1, mx2 - mx1)
+    mask_height = max(1, my2 - my1)
+    setting = pilih_setting_teks(mask_width, mask_height, text)
+    min_font = setting["min_font"]
+    max_font = min(setting["max_font"], max(8, int(mask_height * 0.42)))
+
+    for font_size in range(max_font, min_font - 1, -1):
+        font = _get_font_for_text(
+            text,
+            font_size,
+            target_language,
+            settings=cfg,
+        )
+        stroke_width = _adaptive_stroke_width(font_size, safe_region=True)
+        spacing = max(1, int(font_size * setting["spacing_ratio"]))
+        line_height = _line_height(draw, font, stroke_width) + spacing
+        if line_height <= 0:
+            continue
+
+        max_line_width = _max_mask_line_width(safe_mask) * 0.92
+        if max_line_width <= 4:
+            continue
+        candidates = balanced_wrap_candidates(
+            draw,
+            text,
+            font,
+            max_line_width,
+            stroke_width=stroke_width,
+            allow_hyphenation=False,
+        )
+        candidates += balanced_wrap_candidates(
+            draw,
+            text,
+            font,
+            max_line_width,
+            stroke_width=stroke_width,
+            allow_hyphenation=True,
+        )
+
+        for candidate in sorted(candidates, key=lambda item: (item.penalty, len(item.lines))):
+            placements = _fit_lines_to_mask(
+                draw,
+                candidate.lines,
+                font,
+                stroke_width,
+                line_height,
+                safe_mask,
+                mask_box,
+            )
+            if placements is None:
+                continue
+
+            _draw_line_underlays(draw, placements, font_size, roi_x1, roi_y1)
+            for line, origin_x, origin_y, _ in placements:
+                draw.text(
+                    (roi_x1 + origin_x, roi_y1 + origin_y),
+                    line,
+                    fill=(0, 0, 0),
+                    font=font,
+                    stroke_width=stroke_width,
+                    stroke_fill=(255, 255, 255),
+                )
+            return True
+
+    return False
+
+
+def _mask_bounds(mask):
+    import numpy as np
+
+    binary = np.asarray(mask) > 0
+    if binary.ndim != 2 or not np.any(binary):
+        return None
+    ys, xs = np.where(binary)
+    return int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
+
+
+def _max_mask_line_width(mask):
+    import numpy as np
+
+    binary = np.asarray(mask) > 0
+    if binary.ndim != 2:
+        return 0
+    return max((_row_segment(row)[2] for row in binary), default=0)
+
+
+def _fit_lines_to_mask(draw, lines, font, stroke_width, line_height, mask, mask_box):
+    import numpy as np
+
+    if not lines:
+        return None
+
+    binary = np.asarray(mask) > 0
+    mx1, my1, mx2, my2 = mask_box
+    total_height = int(line_height * len(lines) - max(0, line_height * 0.12))
+    available_height = my2 - my1
+    if total_height > available_height:
+        return None
+
+    start_y = my1 + (available_height - total_height) / 2.0
+    mask_width = max(1, mx2 - mx1)
+    compact_text_in_tall_bubble = (
+        available_height / float(mask_width) >= 2.0
+        and total_height <= available_height * 0.34
+    )
+    if compact_text_in_tall_bubble:
+        start_y -= min(available_height * 0.08, (available_height - total_height) * 0.28)
+    placements = []
+
+    for index, line in enumerate(lines):
+        line_bbox = draw.textbbox((0, 0), line, font=font, stroke_width=stroke_width)
+        line_width = line_bbox[2] - line_bbox[0]
+        line_height_px = line_bbox[3] - line_bbox[1]
+        center_y = int(round(start_y + (index * line_height) + (line_height_px / 2)))
+        left, right, width = _best_segment_near_y(binary, center_y, search_radius=max(2, int(line_height // 2)))
+        if width <= 0 or line_width > width * 0.92:
+            return None
+
+        origin_x = left + ((width - line_width) / 2.0) - line_bbox[0]
+        origin_y = start_y + (index * line_height) - line_bbox[1]
+        ink_left = origin_x + line_bbox[0]
+        ink_top = origin_y + line_bbox[1]
+        ink_right = origin_x + line_bbox[2]
+        ink_bottom = origin_y + line_bbox[3]
+        if ink_left < left or ink_right > right or ink_top < my1 or ink_bottom > my2:
+            return None
+        placements.append((line, origin_x, origin_y, line_bbox))
+
+    return placements
+
+
+def _draw_line_underlays(draw, placements, font_size, offset_x=0, offset_y=0):
+    pad_x = max(4, int(font_size * 0.22))
+    pad_y = max(3, int(font_size * 0.14))
+    radius = max(3, int(font_size * 0.20))
+
+    for _, origin_x, origin_y, bbox in placements:
+        left = offset_x + origin_x + bbox[0] - pad_x
+        top = offset_y + origin_y + bbox[1] - pad_y
+        right = offset_x + origin_x + bbox[2] + pad_x
+        bottom = offset_y + origin_y + bbox[3] + pad_y
+        try:
+            draw.rounded_rectangle(
+                [left, top, right, bottom],
+                radius=radius,
+                fill=(255, 255, 255),
+            )
+        except Exception:
+            draw.rectangle([left, top, right, bottom], fill=(255, 255, 255))
+
+
+def _best_segment_near_y(binary, center_y, search_radius):
+    height = binary.shape[0]
+    best = (0, 0, 0)
+
+    for offset in range(search_radius + 1):
+        for y in {center_y - offset, center_y + offset}:
+            if y < 0 or y >= height:
+                continue
+            left, right, width = _row_segment(binary[y])
+            if width > best[2]:
+                best = (left, right, width)
+        if best[2] > 0:
+            return best
+
+    return best
+
+
+def _row_segment(row):
+    best_left = best_right = best_width = 0
+    start = None
+
+    for index, value in enumerate(row):
+        if value and start is None:
+            start = index
+        elif not value and start is not None:
+            width = index - start
+            if width > best_width:
+                best_left, best_right, best_width = start, index, width
+            start = None
+
+    if start is not None:
+        width = len(row) - start
+        if width > best_width:
+            best_left, best_right, best_width = start, len(row), width
+
+    return best_left, best_right, best_width
+
+
+def _line_height(draw, font, stroke_width):
+    bbox = draw.textbbox((0, 0), "Ag", font=font, stroke_width=stroke_width)
+    return max(1, bbox[3] - bbox[1])
+
+
+def _adaptive_stroke_width(font_size, safe_region=False):
+    base = max(0, font_size // (16 if safe_region else 11))
+    return min(base, 2 if safe_region else 4)
+
+
 def cari_layout_teks_optimal(
     draw,
     text,

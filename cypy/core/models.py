@@ -14,6 +14,13 @@ class Box:
 
 
 @dataclass(frozen=True)
+class TextSegmentationMask:
+    width: int
+    height: int
+    mask: Any
+
+
+@dataclass(frozen=True)
 class Bubble:
     bubble_id: str
     box: Box

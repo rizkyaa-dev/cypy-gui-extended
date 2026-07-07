@@ -2,7 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 
 from cypy.gui.events import GuiEvent, GuiEventType
-from cypy.gui.models.job import DetectionResult
+from cypy.gui.models.job import DetectionPreview, DetectionResult
 
 
 class DetectionExecutor:
@@ -44,7 +44,7 @@ class DetectionExecutor:
             GuiEvent(GuiEventType.DETECTION_STARTED, job_id=job.id)
         )
         try:
-            boxes = self.detector(job.input_path)
+            detection = self.detector(job.input_path)
         except Exception as exc:
             result = DetectionResult(job_id=job.id, boxes=(), error=str(exc))
             self.event_queue.put(
@@ -57,7 +57,18 @@ class DetectionExecutor:
             )
             return result
 
-        result = DetectionResult(job_id=job.id, boxes=tuple(boxes))
+        if isinstance(detection, DetectionPreview):
+            boxes = detection.boxes
+            text_mask = detection.text_mask
+        else:
+            boxes = tuple(detection)
+            text_mask = None
+
+        result = DetectionResult(
+            job_id=job.id,
+            boxes=tuple(boxes),
+            text_mask=text_mask,
+        )
         self.event_queue.put(
             GuiEvent(
                 GuiEventType.DETECTION_FINISHED,

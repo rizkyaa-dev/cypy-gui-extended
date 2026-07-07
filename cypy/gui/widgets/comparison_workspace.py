@@ -27,8 +27,9 @@ class ComparisonWorkspace(ttk.Frame):
         output_path=None,
         translated_message=None,
         boxes=None,
+        text_mask=None,
     ):
-        self.original.set_image_path(input_path, boxes=boxes)
+        self.original.set_image_path(input_path, boxes=boxes, text_mask=text_mask)
         if output_path:
             self.translated.set_image_path(output_path)
         else:

@@ -44,6 +44,12 @@ class ProcessingSettings:
     filter_sfx_aktif: bool
     filter_sfx_mode: str
     simpan_debug_filter_sfx: bool
+    text_assist_enabled: bool
+    text_detector_model: str
+    text_assist_min_score: float
+    text_assist_box_threshold: float
+    text_assist_expand_margin: int
+    text_assist_orphan_recovery: bool
     pakai_patch_untuk_box_gepeng: bool
     rasio_box_gepeng: float
     lebar_box_gepeng_ratio: float
@@ -77,6 +83,12 @@ class ProcessingSettings:
             filter_sfx_aktif=config.FILTER_SFX_AKTIF,
             filter_sfx_mode=config.FILTER_SFX_MODE,
             simpan_debug_filter_sfx=config.SIMPAN_DEBUG_FILTER_SFX,
+            text_assist_enabled=config.TEXT_ASSIST_ENABLED,
+            text_detector_model=config.MODEL_TEXT_DETECTOR,
+            text_assist_min_score=config.TEXT_ASSIST_MIN_SCORE,
+            text_assist_box_threshold=config.TEXT_ASSIST_BOX_THRESHOLD,
+            text_assist_expand_margin=config.TEXT_ASSIST_EXPAND_MARGIN,
+            text_assist_orphan_recovery=config.TEXT_ASSIST_ORPHAN_RECOVERY,
             pakai_patch_untuk_box_gepeng=config.PAKAI_PATCH_UNTUK_BOX_GEPENG,
             rasio_box_gepeng=config.RASIO_BOX_GEPENG,
             lebar_box_gepeng_ratio=config.LEBAR_BOX_GEPENG_RATIO,

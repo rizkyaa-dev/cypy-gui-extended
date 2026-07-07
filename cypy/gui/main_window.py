@@ -156,6 +156,7 @@ class MainWindow(ttk.Frame):
             output_path=output_path,
             translated_message=self._translated_message(job),
             boxes=job.boxes,
+            text_mask=job.text_mask,
         )
         self.page_status.set_page(
             job,
@@ -386,11 +387,13 @@ class MainWindow(ttk.Frame):
                 DetectionStatus.FAILED,
                 boxes=(),
                 error=result.error,
+                text_mask=None,
             )
         else:
             updated = job.with_detection(
                 DetectionStatus.SUCCEEDED,
                 boxes=result.boxes,
+                text_mask=result.text_mask,
             )
         self.jobs.update(updated)
 

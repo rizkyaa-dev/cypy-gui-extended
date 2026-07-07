@@ -52,6 +52,7 @@ TARGET_LANGUAGE = os.getenv("TARGET_LANGUAGE", "")
 
 # ✦ Assets Path - YOLO model and font files go here~ ✦
 MODEL_YOLO = os.path.join(ASSETS_DIR, "eyecyre.onnx")
+MODEL_TEXT_DETECTOR = os.path.join(ASSETS_DIR, "ppocrv6_small_det.onnx")
 FONT_MANGA = os.path.join(ASSETS_DIR, "Komika Axis.ttf")
 
 
@@ -123,6 +124,24 @@ FILTER_SFX_MODE = "seimbang"
 
 # If True, filtered out SFX boxes will be saved for your manual inspection~
 SIMPAN_DEBUG_FILTER_SFX = True
+
+
+# ==========================================
+# Text-assisted bubble refinement
+# ==========================================
+TEXT_ASSIST_ENABLED = os.getenv("TEXT_ASSIST_ENABLED", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+TEXT_ASSIST_MIN_SCORE = float(os.getenv("TEXT_ASSIST_MIN_SCORE", "0.30"))
+TEXT_ASSIST_BOX_THRESHOLD = float(os.getenv("TEXT_ASSIST_BOX_THRESHOLD", "0.50"))
+TEXT_ASSIST_EXPAND_MARGIN = int(os.getenv("TEXT_ASSIST_EXPAND_MARGIN", "18"))
+TEXT_ASSIST_ORPHAN_RECOVERY = os.getenv(
+    "TEXT_ASSIST_ORPHAN_RECOVERY",
+    "1",
+).strip().lower() not in ("0", "false", "no", "off")
 
 
 # ==========================================

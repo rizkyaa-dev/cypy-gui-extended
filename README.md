@@ -25,6 +25,7 @@ The app translates manga pages by detecting speech bubbles with YOLO/ONNX, sendi
 - **Interactive CLI:** Change language, provider, model, and status without restarting.
 - **Zero-setup startup:** Prompts for API keys and creates `.env` when needed. Zen can run without an API key.
 - **Modular core:** Detection, imaging, translation, document processing, providers, settings, and reporting are split into focused modules.
+- **Text-assisted bubble refinement:** Optional PP-OCR ONNX text detection can expand/recover speech-bubble boxes when `assets/ppocrv6_small_det.onnx` is present.
 - **Safer batch processing:** Archive extraction rejects unsafe paths, provider calls are guarded in batch workers, and compatibility facades are covered by tests.
 - **Persistent settings:** User preferences are saved to `data/settings.json`.
 - **Desktop shortcut:** Windows builds can create a desktop shortcut on first run.
@@ -181,6 +182,12 @@ MODEL_CUSTOM=gpt-5.4-mini
 ```
 
 Advanced layout defaults still live in `cypy/core/config.py`. New processing code accepts `ProcessingSettings` so tests and future integrations can avoid mutating global config.
+
+Text-assisted detection is enabled by default when `assets/ppocrv6_small_det.onnx` exists. Disable it with:
+
+```env
+TEXT_ASSIST_ENABLED=0
+```
 
 ---
 

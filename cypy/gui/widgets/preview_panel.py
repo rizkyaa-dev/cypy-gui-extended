@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
 
+import numpy as np
 from PIL import Image, ImageTk
 
 
@@ -31,11 +32,12 @@ class PreviewPanel(ttk.Frame):
         self._source_image = None
         self._photo_image = None
         self._boxes = ()
+        self._text_mask = None
         self._message = "No image selected"
         self._refresh_pending = False
         self._refresh()
 
-    def set_image_path(self, path, boxes=None):
+    def set_image_path(self, path, boxes=None, text_mask=None):
         try:
             with Image.open(path) as image:
                 self._source_image = image.convert("RGB").copy()
@@ -43,6 +45,7 @@ class PreviewPanel(ttk.Frame):
             self.clear("Unable to load image")
         else:
             self._boxes = tuple(boxes or ())
+            self._text_mask = text_mask
             self._message = ""
             self._refresh()
 
@@ -54,6 +57,7 @@ class PreviewPanel(ttk.Frame):
         self._source_image = None
         self._photo_image = None
         self._boxes = ()
+        self._text_mask = None
         self._message = message
         self._refresh()
 
@@ -87,6 +91,7 @@ class PreviewPanel(ttk.Frame):
         )
         resampling = getattr(Image, "Resampling", Image)
         resized = self._source_image.resize(target_size, resampling.LANCZOS)
+        resized = self._apply_text_mask_overlay(resized, target_size)
         self._photo_image = ImageTk.PhotoImage(resized)
         self.canvas.create_image(
             width // 2,
@@ -95,6 +100,31 @@ class PreviewPanel(ttk.Frame):
             anchor=tk.CENTER,
         )
         self._draw_boxes(width, height, target_size, scale)
+
+    def _apply_text_mask_overlay(self, image, target_size):
+        if self._text_mask is None:
+            return image
+
+        mask = np.asarray(self._text_mask.mask, dtype=np.uint8)
+        if mask.ndim != 2 or not np.any(mask):
+            return image
+
+        source_width, source_height = self._source_image.size
+        if (
+            int(self._text_mask.width) != source_width
+            or int(self._text_mask.height) != source_height
+        ):
+            return image
+
+        resampling = getattr(Image, "Resampling", Image)
+        mask_image = Image.fromarray(mask).resize(
+            target_size,
+            resampling.NEAREST,
+        )
+        alpha = mask_image.point(lambda value: 88 if value > 0 else 0)
+        overlay = Image.new("RGBA", target_size, (0, 190, 255, 0))
+        overlay.putalpha(alpha)
+        return Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
 
     def _draw_boxes(self, canvas_width, canvas_height, target_size, scale):
         if not self._boxes:

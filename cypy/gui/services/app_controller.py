@@ -42,4 +42,4 @@ class GuiAppController:
                 self.settings_service.create_bubble_detector(),
                 self.settings_service.processing_settings(),
             )
-        return self._detection_service.detect(image_path)
+        return self._detection_service.detect_preview(image_path)

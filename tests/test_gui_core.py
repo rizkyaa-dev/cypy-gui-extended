@@ -2,9 +2,10 @@ import queue
 
 import numpy as np
 
-from cypy.core.models import Box
+from cypy.core.models import Box, TextSegmentationMask
 from cypy.gui.events import GuiEventType
 from cypy.gui.models.job import (
+    DetectionPreview,
     DetectionStatus,
     JobQueue,
     JobStatus,
@@ -174,6 +175,37 @@ def test_detection_service_returns_typed_boxes(monkeypatch):
     assert boxes == (Box(1, 2, 10, 12), Box(15, 4, 25, 18))
 
 
+def test_detection_service_preview_includes_text_segmentation(monkeypatch):
+    class FakePipeline:
+        def detect_boxes(self, image, image_path):
+            return [[1, 2, 10, 12]]
+
+    class FakeTextDetector:
+        def segment(self, image):
+            return TextSegmentationMask(
+                width=image.shape[1],
+                height=image.shape[0],
+                mask=np.ones(image.shape[:2], dtype=np.uint8) * 255,
+            )
+
+    monkeypatch.setattr(
+        "cypy.gui.services.detection_service.cv2.imread",
+        lambda path: np.zeros((20, 30, 3), dtype=np.uint8),
+    )
+    service = BubbleDetectionService(
+        None,
+        None,
+        pipeline=FakePipeline(),
+        text_detector=FakeTextDetector(),
+    )
+
+    preview = service.detect_preview("page.png")
+
+    assert preview.boxes == (Box(1, 2, 10, 12),)
+    assert preview.text_mask.width == 30
+    assert preview.text_mask.height == 20
+
+
 def test_job_runner_success_passes_context_to_processor(tmp_path):
     input_path = tmp_path / "a.png"
     output_path = tmp_path / "a_cypytr_id.png"
@@ -293,3 +325,25 @@ def test_detection_executor_publishes_boxes(tmp_path):
         GuiEventType.DETECTION_STARTED,
         GuiEventType.DETECTION_FINISHED,
     ]
+
+
+def test_detection_executor_publishes_preview_mask(tmp_path):
+    events = queue.Queue()
+    mask = TextSegmentationMask(
+        width=4,
+        height=3,
+        mask=np.ones((3, 4), dtype=np.uint8),
+    )
+    executor = DetectionExecutor(
+        lambda path: DetectionPreview((Box(1, 2, 30, 40),), text_mask=mask),
+        event_queue=events,
+    )
+    job = ProcessingJob(str(tmp_path / "page.png"))
+
+    try:
+        result = executor.submit(job).result(timeout=2)
+    finally:
+        executor.shutdown(wait=True)
+
+    assert result.boxes == (Box(1, 2, 30, 40),)
+    assert result.text_mask is mask

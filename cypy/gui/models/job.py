@@ -4,7 +4,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Optional, Tuple
 
-from cypy.core.models import Box
+from cypy.core.models import Box, TextSegmentationMask
 
 
 class JobStatus(str, Enum):
@@ -31,6 +31,7 @@ class ProcessingJob:
     progress: int = 0
     message: str = ""
     boxes: Tuple[Box, ...] = field(default_factory=tuple)
+    text_mask: Optional[TextSegmentationMask] = None
     detection_status: DetectionStatus = DetectionStatus.PENDING
     detection_error: str = ""
 
@@ -56,10 +57,11 @@ class ProcessingJob:
             output_path=None,
         )
 
-    def with_detection(self, status, boxes=None, error=""):
+    def with_detection(self, status, boxes=None, error="", text_mask=None):
         return replace(
             self,
             boxes=self.boxes if boxes is None else tuple(boxes),
+            text_mask=text_mask,
             detection_status=DetectionStatus(status),
             detection_error=str(error),
         )
@@ -77,7 +79,14 @@ class ProcessingResult:
 class DetectionResult:
     job_id: str
     boxes: Tuple[Box, ...]
+    text_mask: Optional[TextSegmentationMask] = None
     error: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class DetectionPreview:
+    boxes: Tuple[Box, ...]
+    text_mask: Optional[TextSegmentationMask] = None
 
 
 class JobQueue:
