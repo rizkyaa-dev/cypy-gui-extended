@@ -34,6 +34,15 @@ def _center_inside(center, box):
     return x1 <= x <= x2 and y1 <= y <= y2
 
 
+def _union_boxes(boxes):
+    return [
+        min(box[0] for box in boxes),
+        min(box[1] for box in boxes),
+        max(box[2] for box in boxes),
+        max(box[3] for box in boxes),
+    ]
+
+
 class TextAssistedBoxRefiner:
     """Uses text detections as evidence to refine YOLO speech-bubble boxes."""
 
@@ -78,7 +87,8 @@ class TextAssistedBoxRefiner:
         if self.settings.text_assist_orphan_recovery:
             refined.extend(self._recover_orphan_text_bubbles(image, refined, text_boxes))
 
-        return gabung_kotak_tumpang_tindih(refined, settings=self.settings)
+        merged = gabung_kotak_tumpang_tindih(refined, settings=self.settings)
+        return self._split_compound_text_bubbles(image, merged, text_boxes)
 
     def _expand_bubbles_around_text(self, bubble_boxes, text_boxes, width, height):
         margin = max(0, int(self.settings.text_assist_expand_margin))
@@ -126,6 +136,117 @@ class TextAssistedBoxRefiner:
             kept.append(bubble)
 
         return kept
+
+    def _split_compound_text_bubbles(self, image, bubble_boxes, text_boxes):
+        height, width = image.shape[:2]
+        split_boxes = []
+
+        for bubble in bubble_boxes:
+            parts = self._compound_split_candidates(image, bubble, text_boxes, width, height)
+            split_boxes.extend(parts or [bubble])
+
+        return sorted(split_boxes, key=lambda box: (box[1], box[0]))
+
+    def _compound_split_candidates(self, image, bubble, text_boxes, width, height):
+        x1, y1, x2, y2 = bubble
+        box_width = max(1, x2 - x1)
+        box_height = max(1, y2 - y1)
+        ratio = box_width / float(box_height)
+        if box_width < max(180, width * 0.24) or ratio < 1.15 or box_height > height * 0.24:
+            return None
+
+        linked_texts = [
+            text
+            for text in text_boxes
+            if _irisan_box(text, bubble) / float(max(1, _area_box(text))) >= 0.65
+        ]
+        groups = self._group_texts_by_horizontal_gap(linked_texts, box_width)
+        if len(groups) < 3:
+            return None
+
+        candidates = []
+        group_unions = []
+        for group in groups:
+            text_union = _union_boxes(group)
+            candidate = self._candidate_from_text_region(image, text_union)
+            if candidate is None:
+                return None
+
+            candidate = _clamp_box(candidate, width, height)
+            if not self._split_candidate_is_inside_parent(candidate, bubble):
+                return None
+            group_unions.append(text_union)
+            candidates.append(candidate)
+
+        candidates = self._separate_split_candidates(candidates, group_unions, bubble)
+        if len(candidates) < 3:
+            return None
+        if not self._split_reduces_compound_area(candidates, bubble):
+            return None
+        return candidates
+
+    @staticmethod
+    def _group_texts_by_horizontal_gap(text_boxes, parent_width):
+        if not text_boxes:
+            return []
+
+        groups = []
+        gap_threshold = max(14, int(round(parent_width * 0.055)))
+        for text in sorted(text_boxes, key=lambda box: (box[0], box[1])):
+            if not groups:
+                groups.append([text])
+                continue
+
+            current_union = _union_boxes(groups[-1])
+            x_gap = text[0] - current_union[2]
+            if x_gap >= gap_threshold:
+                groups.append([text])
+            else:
+                groups[-1].append(text)
+
+        return groups
+
+    @staticmethod
+    def _split_candidate_is_inside_parent(candidate, parent):
+        overlap = _irisan_box(candidate, parent)
+        return overlap / float(max(1, _area_box(candidate))) >= 0.55
+
+    @staticmethod
+    def _split_reduces_compound_area(candidates, parent):
+        parent_area = float(max(1, _area_box(parent)))
+        candidate_area = sum(_area_box(candidate) for candidate in candidates)
+        return candidate_area <= parent_area * 1.75
+
+    @staticmethod
+    def _separate_split_candidates(candidates, group_unions, parent):
+        if len(candidates) != len(group_unions) or len(candidates) < 2:
+            return candidates
+
+        order = sorted(range(len(candidates)), key=lambda index: group_unions[index][0])
+        ordered_candidates = [list(candidates[index]) for index in order]
+        ordered_groups = [group_unions[index] for index in order]
+        parent_width = max(1, parent[2] - parent[0])
+        overlap_margin = max(2, min(4, int(round(parent_width * 0.02))))
+
+        for index in range(len(ordered_candidates) - 1):
+            left_group = ordered_groups[index]
+            right_group = ordered_groups[index + 1]
+            boundary = int(round((left_group[2] + right_group[0]) / 2.0))
+            ordered_candidates[index][2] = min(
+                ordered_candidates[index][2],
+                boundary + overlap_margin,
+            )
+            ordered_candidates[index + 1][0] = max(
+                ordered_candidates[index + 1][0],
+                boundary - overlap_margin,
+            )
+
+        separated = []
+        for candidate in ordered_candidates:
+            if candidate[2] <= candidate[0] or candidate[3] <= candidate[1]:
+                return candidates
+            separated.append(candidate)
+        return separated
 
     def _recover_orphan_text_bubbles(self, image, bubble_boxes, text_boxes):
         height, width = image.shape[:2]

@@ -61,6 +61,27 @@ def test_crop_bounds_and_masking_use_custom_settings(tmp_path):
     assert crop.size == (22, 22)
 
 
+def test_crop_masks_neighbor_box_inside_padded_crop(tmp_path):
+    settings = make_settings(
+        tmp_path,
+        min_pad=0,
+        pad_x_ratio=1,
+        pad_y_ratio=1,
+        mask_area_luar_box=False,
+        skala_potongan_mosaik=1,
+    )
+    image = np.full((80, 90, 3), 255, dtype=np.uint8)
+    image[32:45, 26:36] = 0
+    image[20:32, 55:66] = 0
+    box = [20, 20, 45, 60]
+    neighbor = [40, 10, 72, 42]
+
+    crop = crop_bubble(image, box, [box, neighbor], settings=settings)
+
+    assert crop.getpixel((30, 32)) == (0, 0, 0)
+    assert crop.getpixel((60, 25)) == (255, 255, 255)
+
+
 def test_mosaic_uses_custom_settings(tmp_path):
     settings = make_settings(
         tmp_path,
@@ -122,6 +143,35 @@ def test_text_assist_recovers_orphan_text_from_white_region(tmp_path):
     boxes = refiner.refine(image, [])
 
     assert boxes == [[30, 30, 70, 70]]
+
+
+def test_text_assist_splits_wide_compound_bubble_by_text_clusters(tmp_path):
+    class FakeTextDetector:
+        def detect(self, image):
+            return (
+                TextBox(30, 55, 60, 68, 0.9),
+                TextBox(95, 52, 130, 65, 0.9),
+                TextBox(165, 50, 190, 63, 0.9),
+            )
+
+    settings = make_settings(
+        tmp_path,
+        text_assist_expand_margin=4,
+        text_assist_orphan_recovery=False,
+    )
+    image = np.zeros((500, 260, 3), dtype=np.uint8)
+    image[25:115, 10:85] = 255
+    image[25:115, 80:155] = 255
+    image[25:115, 150:225] = 255
+    refiner = TextAssistedBoxRefiner(FakeTextDetector(), settings)
+
+    boxes = refiner.refine(image, [[10, 20, 225, 120]])
+
+    assert len(boxes) == 3
+    by_x = sorted(boxes, key=lambda box: box[0])
+    assert by_x[0][2] <= by_x[1][2]
+    assert by_x[1][0] < by_x[1][2]
+    assert by_x[2][0] >= by_x[1][0]
 
 
 def test_text_assist_keeps_original_boxes_when_detector_fails(tmp_path):
@@ -226,6 +276,32 @@ def test_renderer_uses_analyzed_safe_text_region(tmp_path, monkeypatch):
     }
 
 
+def test_renderer_uses_opaque_caption_patch_for_small_non_bubble_text(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path, pakai_patch_untuk_box_gepeng=False)
+    image = Image.new("RGB", (400, 300), (90, 90, 90))
+    draw = ImageDraw.Draw(image)
+
+    monkeypatch.setattr(
+        "cypy.core.imaging.renderer.analyze_bubble_geometry",
+        lambda image, box: None,
+    )
+    monkeypatch.setattr(
+        "cypy.core.imaging.renderer.tulis_teks_di_balon",
+        lambda *args, **kwargs: None,
+    )
+
+    render_translation(
+        image,
+        draw,
+        [20, 20, 70, 60],
+        "hello",
+        "Indonesian",
+        settings=settings,
+    )
+
+    assert image.getpixel((45, 40)) == (255, 255, 255)
+
+
 def test_renderer_prefers_conservative_layout_mask(tmp_path, monkeypatch):
     settings = make_settings(tmp_path, pakai_patch_untuk_box_gepeng=False)
     safe_mask = np.full((40, 40), 255, dtype=np.uint8)
@@ -266,3 +342,48 @@ def test_renderer_prefers_conservative_layout_mask(tmp_path, monkeypatch):
     assert captured["roi_box"] == geometry.roi_box
     assert captured["mask"] is layout_mask
     assert captured["settings"] is settings
+
+
+def test_renderer_places_small_label_patch_around_existing_text(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path, pakai_patch_untuk_box_gepeng=False)
+    safe_mask = np.zeros((80, 80), dtype=np.uint8)
+    safe_mask[8:72, 0:46] = 255
+    layout_mask = np.zeros((80, 80), dtype=np.uint8)
+    layout_mask[18:66, 0:44] = 255
+    text_erase_mask = np.zeros((80, 80), dtype=np.uint8)
+    text_erase_mask[34:52, 52:74] = 255
+    geometry = BubbleGeometry(
+        roi_box=(100, 100, 180, 180),
+        text_box=(100, 118, 144, 166),
+        interior_mask=safe_mask,
+        safe_mask=safe_mask,
+        layout_mask=layout_mask,
+        layout_box=(100, 118, 144, 166),
+        text_erase_mask=text_erase_mask,
+    )
+    captured = {}
+
+    monkeypatch.setattr(
+        "cypy.core.imaging.renderer.analyze_bubble_geometry",
+        lambda image, box: geometry,
+    )
+
+    def fake_write(draw, text, x1, y1, x2, y2, **kwargs):
+        captured["box"] = (x1, y1, x2, y2)
+        captured["safe_region"] = kwargs["safe_region"]
+
+    monkeypatch.setattr("cypy.core.imaging.renderer.tulis_teks_di_balon", fake_write)
+    image = Image.new("RGB", (900, 900), "white")
+
+    render_translation(
+        image,
+        ImageDraw.Draw(image),
+        [100, 100, 180, 180],
+        "leader",
+        "Indonesian",
+        settings=settings,
+    )
+
+    assert captured["safe_region"] is True
+    assert captured["box"][0] > 135
+    assert captured["box"][2] <= 180

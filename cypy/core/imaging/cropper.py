@@ -13,6 +13,10 @@ def _overlap_1d(a1, a2, b1, b2):
     return max(0, min(a2, b2) - max(a1, b1))
 
 
+def _same_box(a, b):
+    return tuple(map(int, a)) == tuple(map(int, b))
+
+
 def buat_crop_lega_tapi_tidak_nyamber(
     box,
     semua_box,
@@ -34,7 +38,7 @@ def buat_crop_lega_tapi_tidak_nyamber(
     box_height = max(1, y2 - y1)
 
     for other in semua_box:
-        if other == box:
+        if _same_box(other, box):
             continue
 
         ox1, oy1, ox2, oy2 = other
@@ -83,6 +87,68 @@ def mask_luar_box_utama(potongan, crop_x1, crop_y1, x1, y1, x2, y2, settings=Non
     return masked
 
 
+def mask_box_tetangga_dalam_crop(
+    potongan,
+    crop_x1,
+    crop_y1,
+    crop_x2,
+    crop_y2,
+    box_utama,
+    semua_box,
+):
+    if not semua_box:
+        return potongan
+
+    x1, y1, x2, y2 = map(int, box_utama)
+    protected = (
+        max(0, x1 - crop_x1),
+        max(0, y1 - crop_y1),
+        min(potongan.shape[1], x2 - crop_x1),
+        min(potongan.shape[0], y2 - crop_y1),
+    )
+    cleaned = potongan.copy()
+
+    for other in semua_box:
+        if _same_box(other, box_utama):
+            continue
+
+        ox1, oy1, ox2, oy2 = map(int, other)
+        ix1 = max(crop_x1, ox1)
+        iy1 = max(crop_y1, oy1)
+        ix2 = min(crop_x2, ox2)
+        iy2 = min(crop_y2, oy2)
+        if ix2 <= ix1 or iy2 <= iy1:
+            continue
+
+        local_box = (
+            max(0, ix1 - crop_x1),
+            max(0, iy1 - crop_y1),
+            min(potongan.shape[1], ix2 - crop_x1),
+            min(potongan.shape[0], iy2 - crop_y1),
+        )
+        _paint_box_minus_protected(cleaned, local_box, protected)
+
+    return cleaned
+
+
+def _paint_box_minus_protected(image, target, protected):
+    tx1, ty1, tx2, ty2 = target
+    px1, py1, px2, py2 = protected
+    overlap_x1 = max(tx1, px1)
+    overlap_y1 = max(ty1, py1)
+    overlap_x2 = min(tx2, px2)
+    overlap_y2 = min(ty2, py2)
+
+    if overlap_x2 <= overlap_x1 or overlap_y2 <= overlap_y1:
+        image[ty1:ty2, tx1:tx2] = 255
+        return
+
+    image[ty1:overlap_y1, tx1:tx2] = 255
+    image[overlap_y2:ty2, tx1:tx2] = 255
+    image[overlap_y1:overlap_y2, tx1:overlap_x1] = 255
+    image[overlap_y1:overlap_y2, overlap_x2:tx2] = 255
+
+
 def crop_bubble(image, box, all_boxes, settings=None):
     cfg = _settings(settings)
     x1, y1, x2, y2 = box
@@ -107,6 +173,15 @@ def crop_bubble(image, box, all_boxes, settings=None):
     if crop.size == 0:
         return None
 
+    crop = mask_box_tetangga_dalam_crop(
+        crop,
+        crop_x1,
+        crop_y1,
+        crop_x2,
+        crop_y2,
+        [x1, y1, x2, y2],
+        all_boxes,
+    )
     crop = mask_luar_box_utama(crop, crop_x1, crop_y1, x1, y1, x2, y2, settings=cfg)
     crop_pil = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
 

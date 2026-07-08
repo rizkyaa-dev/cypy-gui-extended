@@ -58,3 +58,16 @@ def test_image_processor_smoke_with_fake_detector_and_translator(tmp_path):
     assert os.path.exists(output_path)
     assert translation_service.calls
     assert cv2.imread(output_path) is not None
+
+
+def test_translation_render_order_paints_large_boxes_first():
+    translations = {"1": "small", "2": "large", "3": "medium"}
+    coordinates = {
+        "1": (0, 0, 10, 10),
+        "2": (0, 0, 50, 40),
+        "3": (0, 0, 20, 20),
+    }
+
+    ordered = ImageProcessor._translations_in_render_order(translations, coordinates)
+
+    assert [bubble_id for bubble_id, _ in ordered] == ["2", "3", "1"]

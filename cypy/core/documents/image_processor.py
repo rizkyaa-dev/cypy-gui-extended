@@ -15,6 +15,7 @@ from cypy.core.errors import ProviderAuthError, ProviderRateLimitError
 from cypy.core.filesystem import atomic_replace
 from cypy.core.imaging.mosaic import shrink_crops_to_fit
 from cypy.core.imaging.renderer import render_translation
+from cypy.core.imaging.translation_reflow import reflow_translations_for_layout
 from cypy.core.reporting import ensure_reporter
 from cypy.core.settings import ProcessingSettings
 from cypy.core.translation import MosaicTranslationService, ProviderCallGuard
@@ -119,7 +120,15 @@ class ImageProcessor:
         if self.settings.manual_translation_override:
             translations.update(self.settings.manual_translation_override)
 
-        for bubble_id, text in translations.items():
+        translations = reflow_translations_for_layout(
+            image_pil,
+            translations,
+            coordinates,
+            self.target_language,
+            settings=self.settings,
+        )
+
+        for bubble_id, text in self._translations_in_render_order(translations, coordinates):
             if bubble_id not in coordinates:
                 continue
 
@@ -139,6 +148,15 @@ class ImageProcessor:
         output_path = self.output_namer.translated_image_path(image_path)
         atomic_replace(output_path, lambda temp_path: image_pil.save(temp_path, format="PNG"))
         return output_path
+
+    @staticmethod
+    def _translations_in_render_order(translations, coordinates):
+        def area(item):
+            bubble_id, _ = item
+            x1, y1, x2, y2 = coordinates.get(bubble_id, (0, 0, 0, 0))
+            return max(0, x2 - x1) * max(0, y2 - y1)
+
+        return sorted(translations.items(), key=lambda item: (-area(item), item[0]))
 
     def translate_mosaic(self, mosaic):
         try:
