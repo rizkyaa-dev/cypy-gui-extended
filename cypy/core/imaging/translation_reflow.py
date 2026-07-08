@@ -63,7 +63,45 @@ def reflow_translations_for_layout(
             overflow,
         )
 
+    return _dedupe_accessory_parent_prefixes(adjusted, layouts)
+
+
+def _dedupe_accessory_parent_prefixes(translations, layouts):
+    adjusted = dict(translations)
+    for bubble_id, _ in _prefix_dedupe_regions_by_size(layouts):
+        label = adjusted.get(bubble_id, "").strip()
+        if not label or _is_skip_text(label):
+            continue
+        if len(_normalized_tokens(label)) > 3:
+            continue
+
+        parent_id = _find_parent_region(bubble_id, layouts)
+        if parent_id is None:
+            continue
+
+        parent_text = adjusted.get(parent_id, "").strip()
+        deduped = _remove_leading_phrase(parent_text, label)
+        if deduped:
+            adjusted[parent_id] = deduped
+
     return adjusted
+
+
+def _prefix_dedupe_regions_by_size(layouts):
+    return sorted(
+        (
+            (bubble_id, layout)
+            for bubble_id, layout in layouts.items()
+            if layout.is_accessory or _is_low_capacity_label_candidate(layout)
+        ),
+        key=lambda item: item[1].area,
+    )
+
+
+def _is_low_capacity_label_candidate(layout):
+    x1, y1, x2, y2 = map(int, layout.fit_box)
+    fit_area = max(1, x2 - x1) * max(1, y2 - y1)
+    return layout.area <= 15000 and fit_area <= 5000
 
 
 def _build_region_layouts(image, coordinates):
@@ -289,6 +327,24 @@ def _merge_without_duplicate(existing, addition):
     if not remaining:
         return existing
     return f"{existing} {' '.join(remaining)}".strip()
+
+
+def _remove_leading_phrase(text, phrase):
+    text = str(text).strip()
+    phrase_tokens = _normalized_tokens(phrase)
+    text_tokens = _normalized_tokens(text)
+    if not phrase_tokens or len(text_tokens) <= len(phrase_tokens):
+        return text
+    if text_tokens[:len(phrase_tokens)] != phrase_tokens:
+        return text
+
+    matches = list(re.finditer(r"[\w']+", text, flags=re.UNICODE))
+    if len(matches) <= len(phrase_tokens):
+        return text
+
+    cut_at = matches[len(phrase_tokens) - 1].end()
+    remainder = text[cut_at:].lstrip(" \t\r\n,.:;!?-")
+    return remainder or text
 
 
 def _contains_token_sequence(tokens, needle):
